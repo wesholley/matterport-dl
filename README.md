@@ -35,6 +35,8 @@ Note there is `run.py` which is now the recommended way to call `matterport-dl.p
 
 **Note:** If you want to run `matterport-dl.py` directly, after step 3 install all the requirements from the root of the folder by running: `pip install -r requirements.txt`
 
+**Note on long-term archival:** `requirements.txt` always installs whatever is newest on PyPI, which is what you want for a fresh capture (matterport.com's anti-bot defenses move, so newer dependency versions are more likely to still work). If you're coming back to an already-downloaded twin much later purely to *view* it, `pip install -r requirements-lock.txt` instead reproduces the exact dependency versions that were tested and known to work, rather than whatever is newest at the time. Note that serving an already-downloaded twin doesn't need `curl_cffi` at all (only fresh downloads do) — it's only really required if you want to redownload or refresh a twin.
+
 
 ## Interactive Terminal Interface
 While this script was originally a static command line tool it now has an embedded interactive terminal interface.  You can launch this interface by running run.py without specifying a model or url to download/serve.  The interface supports downloading one or more models at once, renaming, deleting existing models and launching them.  Any command that requires a specific model (ie rename) you can either provide the model ID or the model alias (if it has one).  You can also use tab autocomplete on the id/name. The interface looks like this:

@@ -1,0 +1,24 @@
+# Exact versions known to work together, captured 2026-07-05 (see requirements.txt for the
+# unpinned/floating version of this list). requirements.txt always installs whatever is newest
+# on PyPI at install time; this file pins the same graph to what was actually tested, so a
+# future install can reproduce today's working environment instead of an untested one.
+#
+# Use this instead of requirements.txt when you want reproducibility over freshness, e.g.:
+#   pip install -r requirements-lock.txt
+#
+# If PyPI no longer serves one of these exact versions when you run this, fall back to
+# requirements.txt and expect to need code changes (curl-cffi in particular changes its API
+# and browser-impersonation targets between versions).
+
+aiofiles==25.1.0
+certifi==2026.1.4
+cffi==2.0.0
+charset-normalizer==3.4.4
+curl_cffi==0.7.1
+idna==3.11
+pillow==12.1.1
+pycparser==3.0
+requests==2.32.5
+tqdm==4.67.3
+urllib3==2.6.3
+pyreadline3==3.5.6 ; platform_system=="Windows"

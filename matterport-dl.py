@@ -8,7 +8,6 @@ Usage is either running this program with the URL/pageid as an argument or calli
 
 from __future__ import annotations
 import urllib.parse
-from curl_cffi import requests
 from enum import Enum
 import asyncio
 import aiofiles
@@ -24,8 +23,13 @@ import platform
 
 import shutil
 import sys
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, cast, TYPE_CHECKING
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    # curl_cffi is only needed for actual downloads (see SetupSession); it's imported lazily
+    # there so that serving an already-downloaded twin never requires curl_cffi to be installed.
+    from curl_cffi import requests
 
 import logging
 from functools import partial
@@ -1471,6 +1475,8 @@ RUN_ARGS_CONFIG_NAME = "run_args.json"
 
 def SetupSession(use_proxy):
     global OUR_SESSION, MAX_CONCURRENT_REQUESTS, BASE_MATTERPORT_DOMAIN
+    from curl_cffi import requests  # only actual downloads need curl_cffi; keep serving independent of it
+
     OUR_SESSION = requests.AsyncSession(impersonate="chrome", max_clients=MAX_CONCURRENT_REQUESTS, verify=CLA.getCommandLineArg(CommandLineArg.VERIFY_SSL), proxies=({"http": use_proxy, "https": use_proxy} if use_proxy else None), headers={"Referer": f"https://my.{BASE_MATTERPORT_DOMAIN}/", "x-matterport-application-name": "showcase"})
 
 
@@ -1811,7 +1817,6 @@ def main():
 
     baseDir = CLA.getCommandLineArg(CommandLineArg.BASE_FOLDER)
 
-    SetupSession(CLA.getCommandLineArg(CommandLineArg.PROXY))
     pageId = ""
     bindIp = "127.0.0.1"
     bindPort = 8080
@@ -1882,6 +1887,7 @@ def main():
             sys.exit(1)
 
     if isDownloadRun:
+        SetupSession(CLA.getCommandLineArg(CommandLineArg.PROXY))
         asyncio.run(initiateDownload(pageId))
 
     if isServerRun:
