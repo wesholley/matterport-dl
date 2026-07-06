@@ -1507,7 +1507,7 @@ def RegisterWindowsBrowsers():
 
 def startServer(baseDir, pageId, browserLaunch, bindAddress, bindPort):
     global SERVED_BASE_URL
-    twinDir = getPageId(pageId)
+    twinDir = pageId  # pageId is already resolved/validated by the caller (raw id, or an existing download folder/rename alias)
     if not os.path.exists(twinDir):
         fullPath = os.path.abspath(twinDir)
         relativeToScriptDir = os.path.join(BASE_MATTERPORTDL_DIR, baseDir, twinDir)
@@ -1824,7 +1824,10 @@ def main():
         # Check if pageIdOrIp is an IP address
         ip_pattern = re.compile(r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
         if not ip_pattern.match(pageIdOrIp):
-            pageId = getPageId(pageIdOrIp)
+            if os.path.exists(os.path.join(baseDir, pageIdOrIp)):
+                pageId = pageIdOrIp  # an existing download folder or rename alias - skip raw id/url validation
+            else:
+                pageId = getPageId(pageIdOrIp)
             argPos += 1
             if len(sys.argv) == argPos:  # if no more args its a download run
                 isDownloadRun = True
