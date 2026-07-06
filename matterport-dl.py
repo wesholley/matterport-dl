@@ -614,7 +614,14 @@ async def downloadAssets(base, base_page_text):
     # the newly downloaded chunks too since they can reference further chunks of their own
     # (e.g. init.js has its own logo/locale context map). Bounded to a few rounds so this
     # can't loop forever if chunks end up referencing each other.
+    # scannedFiles avoids re-scanning a bundle we've already read on a later round - only
+    # newly-downloaded chunks need to be scanned again each time round the loop.
     scannedFiles: set[str] = set()
+    # 5 rounds is a heuristic, not a derived bound: in testing, newly-discovered chunks (e.g.
+    # init.js) only ever added one further round's worth of their own chunk references before
+    # settling, so this comfortably covers that with room to spare. The `if not chunkDownload:
+    # break` below is what actually ends the loop in the normal case; this cap only exists so a
+    # future build that references chunks in a cycle can't turn this into an infinite loop.
     for _ in range(5):
         discoveredChunkIds: set[str] = set()
         for asset in assets:
@@ -633,12 +640,17 @@ async def downloadAssets(base, base_page_text):
                 typeDict[jsFile] = "SHOWCASE_DISCOVERED_CHUNK_JS"
                 assets.append(jsFile)
                 chunkDownload.append(AsyncDownloadItem("SHOWCASE_DISCOVERED_CHUNK_JS", False, f"{base}{jsFile}", jsFile))
+            # Most chunk ids don't have a css counterpart, and we have no cheap way to know
+            # which ones do ahead of time (that mapping isn't exposed anywhere we can parse
+            # like the named js/css maps above are). shouldExist=False here means a 404 for
+            # the ones that don't is expected and silent, matching the existing convention
+            # used elsewhere in this file for speculative/best-effort downloads.
             cssFile = f"css/{cssNamedDict.get(chunkId, chunkId)}.css"
             if cssFile not in typeDict:
                 typeDict[cssFile] = "SHOWCASE_DISCOVERED_CHUNK_CSS"
                 assets.append(cssFile)
                 chunkDownload.append(AsyncDownloadItem("SHOWCASE_DISCOVERED_CHUNK_CSS", False, f"{base}{cssFile}", cssFile))
-        if not chunkDownload:
+        if not chunkDownload:  # nothing new discovered this round - normal loop exit
             break
         await AsyncArrayDownload(chunkDownload)
 
