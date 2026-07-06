@@ -456,23 +456,36 @@ def _logUrlDownload(logLevel, logPrefix, type, localTarget, url, additionalParam
     logging.log(logLevel, f"{logPrefix} REQ for {type} {requestID}: should exist: {shouldExist} {optionalResult} File: {localTarget} at url: {url} {key_type} {additionalParams}")
 
 
-def extractJSDict(forWhat: str, str: str):
-    ret: dict[str, str] = {}
-    # Expects a string where the first { starts the dict and last } ends it.
-    startPos = str.find("{")
-    if startPos == -1:
-        raise Exception(f"Unable to extract JS dictionary for: {forWhat} from the JS string: {str} can't find first {{")
-    endPos = str.rfind("}")
-    if endPos == -1:
-        raise Exception(f"Unable to extract JS dictionary for: {forWhat} from the JS string: {str} can't find last }}")
-    str = str[startPos + 1 : endPos]
-    pairs = str.split(",")
-    for kvp in pairs:
-        arr = kvp.replace('"', "").split(":")
-        key = arr[0]
-        key = int(float(key))  # keys can be in scientific notation
-        ret[f"{key}"] = arr[1]
-    return ret
+def extractBraceBlock(text, start_marker):
+    # Finds start_marker in text, then returns the full {...} object literal that follows it
+    # (brace-depth matched, so nested braces in values don't cut it short). Returns None if
+    # the marker or a balanced brace block can't be found.
+    idx = text.find(start_marker)
+    if idx == -1:
+        return None
+    brace_start = text.find("{", idx)
+    if brace_start == -1:
+        return None
+    depth = 0
+    for i in range(brace_start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace_start : i + 1]
+    return None
+
+
+def extractJSDict(forWhat, js_string):
+    """
+    Parses a JS object literal of the form {123:"name",456:"other",...} (bare numeric
+    keys, quoted string values) as used by Matterport's webpack chunk filename maps,
+    e.g. l.u=e=>"js/"+({123:"name"}[e]||e)+".js"
+    """
+    if not js_string:
+        return {}
+    return {m.group(1): m.group(2) for m in re.finditer(r'(\d+)\s*:\s*"([^"]*)"', js_string)}
 
 
 async def downloadAssets(base, base_page_text):
@@ -539,62 +552,29 @@ async def downloadAssets(base, base_page_text):
     await downloadFile("STATIC_ASSET", True, "https://matterport.com/nextjs-assets/images/favicon.ico", "favicon.ico")  # mainly to avoid the 404, always matterport.com
     showcase_cont = await downloadFileAndGetText(typeDict[showcase_runtime_filename], True, base + showcase_runtime_filename, showcase_runtime_filename, always_download=CLA.getCommandLineArg(CommandLineArg.REFRESH_KEY_FILES))
 
-    # lets try to extract the js files it might be loading and make sure we know them, the code has things like .e(858)  ot load which are the numbers we care about
-    # js_extracted = re.findall(r"\.e\(([0-9]{2,3})\)", showcase_cont)
-    # here is how the JS is prettied up (aka with spaces).  First are JS files with specific names, second are the js files to key, and finally are the css files.   The js files with specific names you still need the key for just instead of [number].[key].js it is [name].[key].js
-    # , d.u = e => "js/" + ({
-    #     239: "three-examples",
-    #     777: "split",
-    #     1662: "sdk-bundle",
-    #     9114: "core",
-    #     9553: "control-kit"
-    # } [e] || e) + "." + {
-    #     172: "6c50ed8e5ff7620de75b",
-    #     9553: "8aa28bbfc8f4948fd4d1",
-    #     9589: "dc4901b493f7634edbcf",
-    #     9860: "976dc6caac98abda24c9"
-    # } [e] + ".js", d.miniCssF = e => "css/" + ({
-    #     7475: "late",
-    #     9114: "core"
-    # } [e] || e) + ".css"
+    # Matterport's webpack chunk loader no longer suffixes chunk filenames with a content
+    # hash (older builds served js/<name>.<hash>.js; current builds just serve js/<name>.js,
+    # or js/<id>.js for chunks with no friendly name). The runtime file exposes a name map
+    # for both js and css chunks, e.g.:
+    #   l.u = e => "js/" + ({239: "three-examples", 9553: "control-kit", ...}[e] || e) + ".js"
+    #   l.miniCssF = e => "css/" + ({7475: "late", 9114: "core", ...}[e] || e) + ".css"
+    # Only chunks that have a friendly name appear in these maps; the many numeric-only
+    # chunks referenced elsewhere (as i.e(1470) calls) are discovered later below, once we
+    # have the actual bundle files on disk to scan.
+    jsBlock = extractBraceBlock(showcase_cont, '"js/"+')
+    cssBlock = extractBraceBlock(showcase_cont, '"css/"+')
+    if jsBlock is None or cssBlock is None:
+        raise Exception("Unable to extract js/css chunk filename maps from showcase runtime js file")
+    jsNamedDict = extractJSDict("showcase-runtime.js: named js chunks", jsBlock)
+    cssNamedDict = extractJSDict("showcase-runtime.js: named css chunks", cssBlock)
 
-    match = re.search(
-        r"""
-                "js/"\+ # find js/+  (literal plus)
-                (?P<namedJSFiles>[^\[]+) #capture everything until the first [ character store in group namedJSFiles
-                (?P<JSFileToKey>.+?) #least greedy capture, so capture the minimum amount to make this regex still true
-                css #stopping when we see the css
-                (?P<namedCSSFiles>[^\[]+) #similar to before capture to first [
-                .+? #skip the minimum amount to get to next part
-                miniCss=.+? #find miniCss= then skip minimum to first &&
-                &&
-                (?P<CSSFileToKey>.+?) #capture minimum until we get to next &&
-                &&
-              """,
-        showcase_cont,
-        re.X,
-    )
-    if match is None:
-        raise Exception("Unable to extract js files and css files from showcase runtime js file")
-    groupDict = match.groupdict()
-    jsNamedDict = extractJSDict("showcase-runtime.js: namedJSFiles", groupDict["namedJSFiles"])
-    jsKeyDict = extractJSDict("showcase-runtime.js: JSFileToKey", groupDict["JSFileToKey"])
-    cssNamedDict = extractJSDict("showcase-runtime.js: namedCSSFiles", groupDict["namedCSSFiles"])
-    cssKeyDict = extractJSDict("showcase-runtime.js: CSSFileToKey", groupDict["CSSFileToKey"])
-
-    for number, key in jsKeyDict.items():
-        name = number
-        if name in jsNamedDict:
-            name = jsNamedDict[name]
-        file = f"js/{name}.{key}.js"
+    for number, name in jsNamedDict.items():
+        file = f"js/{name}.js"
         typeDict[file] = "SHOWCASE_DISCOVERED_JS"
         assets.append(file)
 
-    for number, key in cssKeyDict.items():
-        name = number
-        if name in cssNamedDict:
-            name = cssNamedDict[name]
-        file = f"css/{name}.css"  # key is not used for css its just 1 always
+    for number, name in cssNamedDict.items():
+        file = f"css/{name}.css"
         typeDict[file] = "SHOWCASE_DISCOVERED_CSS"
         assets.append(file)
 
@@ -623,6 +603,45 @@ async def downloadAssets(base, base_page_text):
         shouldExist = True
         toDownload.append(AsyncDownloadItem(type, shouldExist, f"{base}{asset}", local_file))
     await AsyncArrayDownload(toDownload)
+
+    # The named js/css maps above only cover chunks with a friendly name. Most chunks are
+    # referenced only by numeric id, either directly via calls like i.e(1470), or indirectly
+    # through webpack "require.context" maps used for lazy-loaded per-locale resources, e.g.
+    # showcase.js contains {"./cwf_en-US.yaml":[42622,2622], ...} where the second number of
+    # each pair is the chunk id (these are not optional: showcase.js's init path loads the
+    # current locale's entry from a map like this, so a missing one blanks the whole viewer).
+    # Scan every JS bundle on disk for both patterns, download whatever's missing, then rescan
+    # the newly downloaded chunks too since they can reference further chunks of their own
+    # (e.g. init.js has its own logo/locale context map). Bounded to a few rounds so this
+    # can't loop forever if chunks end up referencing each other.
+    scannedFiles: set[str] = set()
+    for _ in range(5):
+        discoveredChunkIds: set[str] = set()
+        for asset in assets:
+            local_file = asset.split("?")[0]
+            if local_file.endswith(".js") and local_file not in scannedFiles and os.path.exists(local_file):
+                scannedFiles.add(local_file)
+                with open(local_file, "r", encoding="UTF-8", errors="ignore") as f:
+                    text = f.read()
+                discoveredChunkIds.update(re.findall(r"\.e\((\d+)\)", text))
+                discoveredChunkIds.update(m.group(1) for m in re.finditer(r'"\./[^"]+"\s*:\s*\[\s*\d+\s*,\s*(\d+)\s*\]', text))
+
+        chunkDownload: list[AsyncDownloadItem] = []
+        for chunkId in discoveredChunkIds:
+            jsFile = f"js/{jsNamedDict.get(chunkId, chunkId)}.js"
+            if jsFile not in typeDict:
+                typeDict[jsFile] = "SHOWCASE_DISCOVERED_CHUNK_JS"
+                assets.append(jsFile)
+                chunkDownload.append(AsyncDownloadItem("SHOWCASE_DISCOVERED_CHUNK_JS", False, f"{base}{jsFile}", jsFile))
+            cssFile = f"css/{cssNamedDict.get(chunkId, chunkId)}.css"
+            if cssFile not in typeDict:
+                typeDict[cssFile] = "SHOWCASE_DISCOVERED_CHUNK_CSS"
+                assets.append(cssFile)
+                chunkDownload.append(AsyncDownloadItem("SHOWCASE_DISCOVERED_CHUNK_CSS", False, f"{base}{cssFile}", cssFile))
+        if not chunkDownload:
+            break
+        await AsyncArrayDownload(chunkDownload)
+
     if react_vendor_filename and os.path.exists(react_vendor_filename):
         reactCont = ""
         with open(react_vendor_filename, "r", encoding="UTF-8") as f:
