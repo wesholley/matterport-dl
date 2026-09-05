@@ -1410,23 +1410,20 @@ class OurSimpleHTTPRequestHandler(SimpleHTTPRequestHandler):
         return False
 
     def do_GraphRequest(self, option_name: str):
-        post_msg = None
-        logLevel = logging.INFO
-        if option_name in GRAPH_DATA_REQ:
-            self.send_response(200)
-            self.end_headers()
-            file_path = f"api/mp/models/graph_{option_name}.json"
-            if os.path.exists(file_path):
-                with open(file_path, "r", encoding="UTF-8") as f:
-                    self.wfile.write(f.read().encode("utf-8"))
-                    post_msg = f"graph of operationName: {option_name} we are handling internally"
-            else:
-                logLevel = logging.WARNING
-                post_msg = f"graph for operationName: {option_name} we don't know how to handle, but likely could add support, returning empty instead. If you get an error this may be why (include this message in bug report)."
-                self.wfile.write(bytes('{"data": "empty"}', "utf-8"))
-
-        if post_msg is not None:
-            consoleDebugLog(f"Handling a graph request on {self.path}: {post_msg}", loglevel=logLevel)
+        # Always respond, even for an operationName we don't recognize at all (e.g. one added
+        # to Matterport's live app since this tool was last updated for it) - previously an
+        # unrecognized operationName fell through this function with no response sent at all,
+        # which the browser saw as a hung/empty connection rather than a clean, recoverable error.
+        self.send_response(200)
+        self.end_headers()
+        file_path = f"api/mp/models/graph_{option_name}.json" if option_name in GRAPH_DATA_REQ else None
+        if file_path and os.path.exists(file_path):
+            with open(file_path, "r", encoding="UTF-8") as f:
+                self.wfile.write(f.read().encode("utf-8"))
+            consoleDebugLog(f"Handling a graph request on {self.path}: graph of operationName: {option_name} we are handling internally", loglevel=logging.INFO)
+        else:
+            self.wfile.write(bytes('{"data": "empty"}', "utf-8"))
+            consoleDebugLog(f"Handling a graph request on {self.path}: graph for operationName: {option_name} we don't know how to handle (not recognized, or recognized but not cached on disk), returning empty instead. If you get an error this may be why (include this message in bug report).", loglevel=logging.WARNING)
 
     def do_POST(self):
         post_msg = None
@@ -1458,9 +1455,17 @@ class OurSimpleHTTPRequestHandler(SimpleHTTPRequestHandler):
 
 GRAPH_DATA_REQ = {
     "GetModelDetails": "?operationName=GetModelDetails&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22012c3d36cdf890ba8e49dfd66b1072a2dbb573e672d72482eff86a2563530f46%22%7D%7D",
+    # Added since the live viewer now queries this on load and needs real (not empty) data to
+    # finish loading - was previously entirely unhandled (see do_GraphRequest's unknown-operation
+    # fallback), observed from a live request's own persistedQuery hash.
+    "GetModelAssets": "?operationName=GetModelAssets&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%2288fcfb6cb48b4c99c53623b3d939da42da1a700014fe1e926ba6f14f49b777c2%22%7D%7D",
     "GetModelViewPrefetch": "?operationName=GetModelViewPrefetch&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%2C%22includeDisabled%22%3Afalse%2C%22includeLayers%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22ed65e7307756d949f0e7cdab0cf79ee0b0797cc9c494d8811a2bb3025cd7bce6%22%7D%7D",
     "GetRoomBounds": "?operationName=GetRoomBounds&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%2214f99a0c44512f435987f1305eacdaea7ca600f2b5e9022499087188e63915aa%22%7D%7D",
     "GetShowcaseSweeps": "?operationName=GetShowcaseSweeps&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%220faff869a8ae9385fe262d18ea1f731bbbeb3d618c036e60a8d0d630ae3526a5%22%7D%7D",
+    # Added: distinct from GetShowcaseSweeps above - the live viewer now also calls this one
+    # (repeatedly, since walk mode can't get real sweep-location data without it) when
+    # transitioning into walk/panorama mode. Was previously entirely unhandled.
+    "GetSweeps": "?operationName=GetSweeps&variables=%7B%22sweepIds%22%3Anull%2C%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%2C%22sweepTags%22%3A%5B%22showcase%22%5D%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22f7f1c9ec3e99b6579e76291da523de689c07d5e2c421f4ab82cf826b19af2427%22%7D%7D",
     "GetSnapshots": "?operationName=GetSnapshots&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22510bd772b16a48aa4ea74aa290373225eeb306b3162fa34c75d6f643daf3f22b%22%7D%7D",
     # the following normally only seen on defurnished views directly
     "GetRoomClassifications": "?operationName=GetRoomClassifications&variables=%7B%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22fdfefe83b3f6c491b0b76576b34366278274c92b36324bef4dd299d39fb986f3%22%7D%7D",  # yes get room classificaitons does not take a model id
