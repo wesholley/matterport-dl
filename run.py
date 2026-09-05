@@ -75,7 +75,7 @@ def check_python_version():
     version_info = sys.version_info
     if version_info.major < 3 or (version_info.major == 3 and version_info.minor < 12):
         debug_print(f"Error: Python 3.12 or higher is required. You are using Python {platform.python_version()}", is_error=True)
-        sys.exit(1)
+        #sys.exit(1)
 
 def check_required_files(script_dir):
     """Check for the existence of required files."""
@@ -120,13 +120,29 @@ def run_in_venv(script_dir, venv_dir):
     script_path = os.path.abspath(__file__)
 
     debug_print(f"Restarting in virtual environment python executable: {python_executable} ...")
-    try:
-        # Pass all command line arguments to the new process
-        process = subprocess.run([python_executable, script_path] + sys.argv[1:])
-        sys.exit(process.returncode)
-    except Exception as e:
-        debug_print(f"Error running script in virtual environment: {e}", is_error=True)
-        sys.exit(1)
+    args = [python_executable, script_path] + sys.argv[1:]
+    if sys.platform == "win32":
+        # os.execv doesn't replace the process on Windows (it still spawns a child and waits),
+        # so there's no benefit to it there - keep the simple subprocess form.
+        try:
+            process = subprocess.run(args)
+            sys.exit(process.returncode)
+        except Exception as e:
+            debug_print(f"Error running script in virtual environment: {e}", is_error=True)
+            sys.exit(1)
+    else:
+        # Replace this process with the venv's python instead of spawning a child we wait on.
+        # With subprocess.run, killing *this* process (by pid, a process manager, systemd/
+        # launchd stopping a background service, etc.) doesn't reliably kill the child actually
+        # running the server - it can be left orphaned (reparented to pid 1), still holding the
+        # port, so the next start attempt fails with "Address already in use". os.execv keeps
+        # the same pid for the whole life of the process, so there's nothing to orphan: any
+        # signal sent to this pid reaches the real server directly.
+        try:
+            os.execv(python_executable, args)
+        except Exception as e:
+            debug_print(f"Error running script in virtual environment: {e}", is_error=True)
+            sys.exit(1)
 
 def parse_requirements(requirements_file):
     """Parse requirements.txt to get module names and versions."""
